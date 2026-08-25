@@ -56,7 +56,57 @@ def test_clima_open_meteo_usa_ventana_de_carrera_no_el_dia_completo():
     assert clima_sin_horario_conocido["lluvia"] is True
 
 
+def test_obtener_pronostico_carrera_dentro_de_rango():
+    respuesta_falsa = {
+        "hourly": {
+            "time": [f"2026-09-06T{h:02d}:00" for h in range(24)],
+            "precipitation": [0.0] * 24,
+            "precipitation_probability": [5] * 13 + [80, 85, 20] + [5] * 8,  # pico 13-15h
+            "temperature_2m": [25.0] * 24,
+        }
+    }
+
+    pedir_json_original = weather._pedir_json
+    weather._pedir_json = lambda url, parametros: respuesta_falsa
+    try:
+        pronostico = weather.obtener_pronostico_carrera(
+            "2026-09-06", "13:00:00Z", 45.6156, 9.2811
+        )
+    finally:
+        weather._pedir_json = pedir_json_original
+
+    assert pronostico["lluvia"] is True  # 85% de probabilidad dentro de la ventana 13-15h
+    assert pronostico["probabilidad_lluvia_pct"] == 85
+    assert pronostico["temperatura_c"] == 25.0
+
+
+def test_obtener_pronostico_carrera_fuera_de_rango():
+    """Fecha fuera del horizonte de pronóstico: la API responde pero sin
+    valores útiles para esos índices (huecos de None)."""
+    respuesta_falsa = {
+        "hourly": {
+            "time": ["2026-12-25T00:00"],
+            "precipitation": [None],
+            "precipitation_probability": [None],
+            "temperature_2m": [None],
+        }
+    }
+
+    pedir_json_original = weather._pedir_json
+    weather._pedir_json = lambda url, parametros: respuesta_falsa
+    try:
+        pronostico = weather.obtener_pronostico_carrera(
+            "2026-12-25", "13:00:00Z", 45.6156, 9.2811
+        )
+    finally:
+        weather._pedir_json = pedir_json_original
+
+    assert pronostico == {"lluvia": None, "probabilidad_lluvia_pct": None, "temperatura_c": None}
+
+
 if __name__ == "__main__":
     test_hora_utc_a_entero()
     test_clima_open_meteo_usa_ventana_de_carrera_no_el_dia_completo()
+    test_obtener_pronostico_carrera_dentro_de_rango()
+    test_obtener_pronostico_carrera_fuera_de_rango()
     print("Todas las pruebas de weather.py pasaron correctamente.")

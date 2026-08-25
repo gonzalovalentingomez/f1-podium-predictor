@@ -9,10 +9,14 @@ Combina dos fuentes gratuitas y sin API key:
   anteriores a 2023 (donde OpenF1 no tiene datos) y como respaldo si
   OpenF1 no encuentra la sesión.
 
-Importante: esto da clima HISTÓRICO real, útil para entrenar el modelo
-con carreras ya disputadas. Para predecir una carrera futura (ej. Monza
-2026) hace falta un PRONÓSTICO en vez de clima real; eso se resuelve más
-adelante, cerca de la fecha de la carrera, en el pipeline de predicción.
+Importante: `obtener_clima_carrera` da clima HISTÓRICO real (para
+entrenar con carreras ya disputadas). Para una carrera futura (ej. Monza
+2026, todavía sin resultados en Jolpica-F1) hace falta un PRONÓSTICO en
+vez de clima real: eso lo resuelve `obtener_pronostico_carrera`, vía
+Open-Meteo Forecast (mismo proveedor que el archivo histórico, pero su
+endpoint de pronóstico, con cobertura de ~16 días a futuro). Se usa recién
+en el pipeline de predicción (cerca de la fecha de la carrera, para que
+el pronóstico sea confiable), no en el armado del dataset de entrenamiento.
 """
 
 import json
@@ -27,6 +31,8 @@ OPENF1_BASE_URL = "https://api.openf1.org/v1"
 OPENF1_PRIMER_ANIO = 2023
 
 OPEN_METEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+UMBRAL_PROBABILIDAD_LLUVIA_PCT = 50
 
 
 def _ruta_cache(clave: str) -> Path:
@@ -207,3 +213,75 @@ def obtener_clima_carrera(
 
     clima = _clima_open_meteo(temporada, ronda, fecha, hora, lat, lon, usar_cache)
     return clima if clima is not None else {"lluvia": None, "temperatura_c": None}
+
+
+def obtener_pronostico_carrera(
+    fecha: str, hora: str | None, lat: float | None, lon: float | None
+) -> dict:
+    """Pronóstico de clima para una carrera futura, vía Open-Meteo Forecast.
+
+    A diferencia de `obtener_clima_carrera`, NO se cachea en disco: un
+    pronóstico cambia día a día a medida que se acerca la fecha, así que
+    guardarlo permanentemente daría un dato viejo y engañoso. Solo tiene
+    cobertura confiable dentro de los próximos ~16 días; para fechas más
+    lejanas, la API puede no devolver datos.
+
+    Args:
+        fecha: fecha de la carrera en formato YYYY-MM-DD.
+        hora: horario de largada en UTC, formato "13:00:00Z" (si es None,
+            se considera el día completo en vez de una ventana horaria).
+        lat, lon: coordenadas del circuito (Jolpica-F1 Circuit.Location).
+
+    Returns:
+        Diccionario {"lluvia": bool | None, "probabilidad_lluvia_pct":
+        float | None, "temperatura_c": float | None}. Todos los valores
+        son None si la fecha está fuera del rango de pronóstico
+        disponible o si la fuente no respondió.
+    """
+    if lat is None or lon is None:
+        return {"lluvia": None, "probabilidad_lluvia_pct": None, "temperatura_c": None}
+
+    parametros = {
+        "latitude": lat,
+        "longitude": lon,
+        "start_date": fecha,
+        "end_date": fecha,
+        "hourly": "precipitation,precipitation_probability,temperature_2m",
+        "timezone": "UTC",
+    }
+    datos = _pedir_json(OPEN_METEO_FORECAST_URL, parametros)
+    if datos is None:
+        return {"lluvia": None, "probabilidad_lluvia_pct": None, "temperatura_c": None}
+
+    try:
+        precipitaciones = datos["hourly"]["precipitation"]
+        probabilidades = datos["hourly"]["precipitation_probability"]
+        temperaturas = datos["hourly"]["temperature_2m"]
+    except KeyError:
+        return {"lluvia": None, "probabilidad_lluvia_pct": None, "temperatura_c": None}
+
+    hora_inicio = _hora_utc_a_entero(hora)
+    if hora_inicio is None:
+        indices_ventana = range(len(precipitaciones))
+    else:
+        indices_ventana = range(hora_inicio, min(hora_inicio + 3, len(precipitaciones)))
+
+    precip_ventana = [precipitaciones[i] for i in indices_ventana if precipitaciones[i] is not None]
+    prob_ventana = [probabilidades[i] for i in indices_ventana if probabilidades[i] is not None]
+    temp_ventana = [temperaturas[i] for i in indices_ventana if temperaturas[i] is not None]
+
+    if not precip_ventana and not prob_ventana:
+        # Fecha fuera del rango de pronóstico: la API devuelve la
+        # estructura pero sin valores útiles para esos índices.
+        return {"lluvia": None, "probabilidad_lluvia_pct": None, "temperatura_c": None}
+
+    probabilidad_maxima = max(prob_ventana) if prob_ventana else None
+
+    return {
+        "lluvia": bool(
+            (precip_ventana and sum(precip_ventana) > 0)
+            or (probabilidad_maxima is not None and probabilidad_maxima >= UMBRAL_PROBABILIDAD_LLUVIA_PCT)
+        ),
+        "probabilidad_lluvia_pct": probabilidad_maxima,
+        "temperatura_c": round(sum(temp_ventana) / len(temp_ventana), 1) if temp_ventana else None,
+    }
