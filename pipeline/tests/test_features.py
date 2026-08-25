@@ -79,8 +79,49 @@ def test_construir_tabla_clasificacion():
     assert fila_leclerc["mejor_tiempo_seg"] == 80.4
 
 
+def test_agregar_forma_reciente():
+    tabla = pd.DataFrame([
+        {"temporada": 2026, "ronda": 1, "piloto_id": "norris", "posicion_final": 1},
+        {"temporada": 2026, "ronda": 2, "piloto_id": "norris", "posicion_final": 3},
+        {"temporada": 2026, "ronda": 3, "piloto_id": "norris", "posicion_final": 2},
+    ])
+    resultado = features.agregar_forma_reciente(tabla, ventana=4)
+
+    fila_ronda1 = resultado.loc[resultado["ronda"] == 1].iloc[0]
+    assert pd.isna(fila_ronda1["forma_reciente"])  # sin carreras previas
+
+    fila_ronda2 = resultado.loc[resultado["ronda"] == 2].iloc[0]
+    assert fila_ronda2["forma_reciente"] == 1.0  # solo la ronda 1
+
+    fila_ronda3 = resultado.loc[resultado["ronda"] == 3].iloc[0]
+    assert fila_ronda3["forma_reciente"] == 2.0  # promedio de rondas 1 y 2: (1+3)/2
+
+
+def test_agregar_historial_circuito():
+    tabla = pd.DataFrame([
+        {"temporada": 2025, "ronda": 1, "piloto_id": "norris", "constructor_id": "mclaren",
+         "circuito_id": "monza", "posicion_final": 1},
+        {"temporada": 2025, "ronda": 10, "piloto_id": "norris", "constructor_id": "mclaren",
+         "circuito_id": "spa", "posicion_final": 5},
+        {"temporada": 2026, "ronda": 14, "piloto_id": "norris", "constructor_id": "mclaren",
+         "circuito_id": "monza", "posicion_final": 2},
+    ])
+    resultado = features.agregar_historial_circuito(tabla)
+
+    fila_monza_2025 = resultado.loc[
+        (resultado["temporada"] == 2025) & (resultado["circuito_id"] == "monza")
+    ].iloc[0]
+    assert pd.isna(fila_monza_2025["historial_piloto_circuito"])  # primera vez en Monza
+
+    fila_monza_2026 = resultado.loc[resultado["temporada"] == 2026].iloc[0]
+    assert fila_monza_2026["historial_piloto_circuito"] == 1.0
+    assert fila_monza_2026["historial_equipo_circuito"] == 1.0
+
+
 if __name__ == "__main__":
     test_tiempo_a_segundos()
     test_construir_tabla_resultados()
     test_construir_tabla_clasificacion()
+    test_agregar_forma_reciente()
+    test_agregar_historial_circuito()
     print("Todas las pruebas de features.py pasaron correctamente.")

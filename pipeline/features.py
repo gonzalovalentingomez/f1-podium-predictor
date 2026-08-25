@@ -1,11 +1,16 @@
 """Construcción del dataset de features para el modelo de podio.
 
 Combina resultados de carrera y clasificación de Jolpica-F1 (vía
-`api_client`) en una tabla por piloto/carrera. Esta primera capa cubre
-grid de largada, gap de tiempo contra la pole y el resultado final (con
-la variable objetivo `podio`). El resto de las features del brief (forma
-reciente, historial de circuito, delta clasificación/ritmo por equipo,
-etc.) se agregan incrementalmente sobre esta misma tabla base.
+`api_client`) en una tabla por piloto/carrera. Por ahora incluye: grid de
+largada, gap de tiempo contra la pole, resultado final (con la variable
+objetivo `podio`), forma reciente del piloto y historial de piloto/equipo
+en el circuito. El resto de las features del brief (delta clasificación/
+ritmo por equipo, curva de desarrollo, confiabilidad, clima, etc.) se
+agregan incrementalmente sobre esta misma tabla base.
+
+Las features de forma reciente e historial de circuito solo usan carreras
+ANTERIORES a la que se está prediciendo (nunca la carrera actual), para no
+filtrar información del futuro al dataset de entrenamiento.
 """
 
 from pathlib import Path
@@ -118,12 +123,66 @@ def construir_tabla_resultados(carreras: list) -> pd.DataFrame:
     return pd.DataFrame(filas)
 
 
-def construir_dataset_base(temporadas: list[int], usar_cache: bool = True) -> pd.DataFrame:
-    """Arma la tabla base del dataset (resultados + grid + gap a la pole).
+def agregar_forma_reciente(tabla: pd.DataFrame, ventana: int = 4) -> pd.DataFrame:
+    """Agrega la forma reciente de cada piloto: promedio de posición final
+    en sus últimas `ventana` carreras, sin contar la carrera actual.
+
+    Args:
+        tabla: Tabla de resultados con al menos las columnas temporada,
+            ronda, piloto_id, posicion_final.
+        ventana: Cantidad de carreras previas a promediar (3-4 según el
+            brief; default 4).
+
+    Returns:
+        Copia de `tabla` con la columna `forma_reciente` agregada. Es NaN
+        cuando el piloto todavía no disputó ninguna carrera previa (ej. su
+        primera carrera en el dataset).
+    """
+    tabla = tabla.sort_values(["piloto_id", "temporada", "ronda"]).copy()
+    tabla["forma_reciente"] = tabla.groupby("piloto_id")["posicion_final"].transform(
+        lambda serie: serie.shift(1).rolling(ventana, min_periods=1).mean()
+    )
+    return tabla
+
+
+def agregar_historial_circuito(tabla: pd.DataFrame) -> pd.DataFrame:
+    """Agrega el historial de piloto y equipo en el circuito de cada carrera.
+
+    Args:
+        tabla: Tabla de resultados con al menos las columnas temporada,
+            ronda, piloto_id, constructor_id, circuito_id, posicion_final.
+
+    Returns:
+        Copia de `tabla` con las columnas `historial_piloto_circuito` y
+        `historial_equipo_circuito`: promedio de posición final en visitas
+        anteriores de ese piloto/equipo a ese mismo trazado. NaN si no hay
+        visitas previas (circuito nuevo en el calendario, o piloto/equipo
+        sin historial ahí).
+    """
+    tabla = tabla.sort_values(["temporada", "ronda"]).copy()
+
+    tabla["historial_piloto_circuito"] = tabla.groupby(["piloto_id", "circuito_id"])[
+        "posicion_final"
+    ].transform(lambda serie: serie.shift(1).expanding().mean())
+
+    tabla["historial_equipo_circuito"] = tabla.groupby(["constructor_id", "circuito_id"])[
+        "posicion_final"
+    ].transform(lambda serie: serie.shift(1).expanding().mean())
+
+    return tabla
+
+
+def construir_dataset_base(
+    temporadas: list[int], usar_cache: bool = True, ventana_forma_reciente: int = 4
+) -> pd.DataFrame:
+    """Arma la tabla base del dataset: resultados, grid, gap a la pole,
+    forma reciente e historial de circuito.
 
     Args:
         temporadas: Años a incluir (ej: [2023, 2024, 2025, 2026]).
         usar_cache: Si es False, fuerza a pedir los datos siempre a la API.
+        ventana_forma_reciente: Cantidad de carreras previas a promediar
+            para la forma reciente (ver `agregar_forma_reciente`).
 
     Returns:
         DataFrame combinado de todas las temporadas pedidas, ordenado por
@@ -148,6 +207,9 @@ def construir_dataset_base(temporadas: list[int], usar_cache: bool = True) -> pd
         on=["temporada", "ronda", "piloto_id"],
         how="left",
     )
+    dataset = agregar_forma_reciente(dataset, ventana=ventana_forma_reciente)
+    dataset = agregar_historial_circuito(dataset)
+
     return dataset.sort_values(["temporada", "ronda", "grid"]).reset_index(drop=True)
 
 
