@@ -11,8 +11,9 @@ env/
 .mypy_cache/
 .ipynb_checkpoints/
 
-# Data cache (regenerable desde la API)
+# Datos regenerables desde la API (cache cruda + datasets derivados)
 pipeline/data_cache/
+pipeline/data/
 
 # Next.js / Node
 node_modules/
