@@ -13,12 +13,14 @@ sys.path.append(str(Path(__file__).parent.parent))
 import pandas as pd  # noqa: E402
 
 import features  # noqa: E402
+import weather  # noqa: E402
 
 CARRERAS_DE_PRUEBA = [
     {
         "season": "2026", "round": "14", "raceName": "Italian Grand Prix",
-        "date": "2026-09-06",
-        "Circuit": {"circuitId": "monza", "circuitName": "Autodromo Nazionale di Monza"},
+        "date": "2026-09-06", "time": "13:00:00Z",
+        "Circuit": {"circuitId": "monza", "circuitName": "Autodromo Nazionale di Monza",
+                    "Location": {"lat": "45.6156", "long": "9.2811"}},
         "Results": [
             {"position": "1", "grid": "1", "points": "25", "status": "Finished",
              "Driver": {"driverId": "norris", "givenName": "Lando", "familyName": "Norris"},
@@ -63,6 +65,9 @@ def test_construir_tabla_resultados():
     assert fila_leclerc["podio"] == False  # noqa: E712
     assert fila_leclerc["circuito_id"] == "monza"
     assert fila_leclerc["constructor_id"] == "ferrari"
+    assert fila_leclerc["circuito_lat"] == 45.6156
+    assert fila_leclerc["circuito_lon"] == 9.2811
+    assert fila_leclerc["hora"] == "13:00:00Z"
 
 
 def test_construir_tabla_clasificacion():
@@ -203,6 +208,29 @@ def test_calcular_confiabilidad_equipo():
     assert fila_ronda2["tasa_dnf_equipo"] == 0.5  # ronda 1: 1 de 2 autos abandonó
 
 
+def test_agregar_clima():
+    tabla = pd.DataFrame([
+        {"temporada": 2025, "ronda": 1, "piloto_id": "norris", "fecha": "2025-03-16",
+         "hora": "05:00:00Z", "circuito_lat": -37.8497, "circuito_lon": 144.968},
+        {"temporada": 2025, "ronda": 1, "piloto_id": "piastri", "fecha": "2025-03-16",
+         "hora": "05:00:00Z", "circuito_lat": -37.8497, "circuito_lon": 144.968},
+    ])
+
+    # Se reemplaza la función real (que pega a OpenF1/Open-Meteo) por una
+    # versión de prueba, para no depender de la red ni de rate limits.
+    clima_original = weather.obtener_clima_carrera
+    weather.obtener_clima_carrera = lambda **kwargs: {"lluvia": True, "temperatura_c": 21.5}
+    try:
+        resultado = features.agregar_clima(tabla)
+    finally:
+        weather.obtener_clima_carrera = clima_original
+
+    assert (resultado["lluvia"] == True).all()  # noqa: E712
+    assert (resultado["temperatura_c"] == 21.5).all()
+    assert "circuito_lat" not in resultado.columns
+    assert "circuito_lon" not in resultado.columns
+
+
 if __name__ == "__main__":
     test_tiempo_a_segundos()
     test_construir_tabla_resultados()
@@ -213,4 +241,5 @@ if __name__ == "__main__":
     test_calcular_delta_clasificacion_ritmo()
     test_calcular_curva_desarrollo()
     test_calcular_confiabilidad_equipo()
+    test_agregar_clima()
     print("Todas las pruebas de features.py pasaron correctamente.")

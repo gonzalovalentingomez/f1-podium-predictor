@@ -1,14 +1,14 @@
 """Construcción del dataset de features para el modelo de podio.
 
 Combina resultados de carrera y clasificación de Jolpica-F1 (vía
-`api_client`) en una tabla por piloto/carrera. Por ahora incluye: grid de
-largada, gap de tiempo contra la pole, resultado final (con la variable
-objetivo `podio`), forma reciente del piloto, historial de piloto/equipo
-en el circuito, dificultad de adelantamiento del circuito, delta
-clasificación/ritmo por equipo, curva de desarrollo del auto en la
-temporada y confiabilidad (tasa de DNF) del equipo. Quedan del brief:
-clima (OpenF1) y proxy de rookies (Fórmula 2), que requieren integrar una
-fuente de datos nueva cada una.
+`api_client`) con clima histórico (vía `weather`) en una tabla por
+piloto/carrera. Por ahora incluye: grid de largada, gap de tiempo contra
+la pole, resultado final (con la variable objetivo `podio`), forma
+reciente del piloto, historial de piloto/equipo en el circuito,
+dificultad de adelantamiento del circuito, delta clasificación/ritmo por
+equipo, curva de desarrollo del auto en la temporada, confiabilidad (tasa
+de DNF) del equipo y clima (lluvia y temperatura). Queda del brief el
+proxy de rookies vía Fórmula 2.
 
 Forma reciente, historial de circuito, delta clasificación/ritmo, curva
 de desarrollo y confiabilidad solo usan carreras ANTERIORES a la que se
@@ -28,12 +28,21 @@ import numpy as np
 import pandas as pd
 
 import api_client
+import weather
 
 
 def _a_entero_o_none(valor):
     """Convierte a entero si es posible; si no (ej. 'R' de retirado), None."""
     try:
         return int(valor)
+    except (TypeError, ValueError):
+        return None
+
+
+def _a_float_o_none(valor):
+    """Convierte a float si es posible; si no, None."""
+    try:
+        return float(valor)
     except (TypeError, ValueError):
         return None
 
@@ -100,13 +109,17 @@ def construir_tabla_resultados(carreras: list) -> pd.DataFrame:
 
     Returns:
         DataFrame con columnas: temporada, ronda, gran_premio, fecha,
-        circuito_id, circuito_nombre, piloto_id, piloto, constructor_id,
-        constructor, grid, posicion_final, puntos, estado y la variable
-        objetivo `podio` (True si terminó entre los primeros 3).
+        circuito_id, circuito_nombre, circuito_lat, circuito_lon, hora,
+        piloto_id, piloto, constructor_id, constructor, grid,
+        posicion_final, puntos, estado y la variable objetivo `podio`
+        (True si terminó entre los primeros 3). Coordenadas y hora del
+        circuito son un dato intermedio para cruzar clima (ver
+        `agregar_clima`), no una feature del modelo en sí.
     """
     filas = []
     for carrera in carreras:
         circuito = carrera.get("Circuit", {})
+        ubicacion = circuito.get("Location", {})
         for resultado in carrera.get("Results", []):
             piloto = resultado["Driver"]
             constructor = resultado["Constructor"]
@@ -119,6 +132,9 @@ def construir_tabla_resultados(carreras: list) -> pd.DataFrame:
                 "fecha": carrera["date"],
                 "circuito_id": circuito.get("circuitId", ""),
                 "circuito_nombre": circuito.get("circuitName", ""),
+                "circuito_lat": _a_float_o_none(ubicacion.get("lat")),
+                "circuito_lon": _a_float_o_none(ubicacion.get("long")),
+                "hora": carrera.get("time"),
                 "piloto_id": piloto["driverId"],
                 "piloto": f"{piloto['givenName']} {piloto['familyName']}",
                 "constructor_id": constructor["constructorId"],
@@ -333,6 +349,51 @@ def agregar_confiabilidad_equipo(tabla: pd.DataFrame, ventana: int = 4) -> pd.Da
     return tabla.merge(confiabilidad, on=["temporada", "ronda", "constructor_id"], how="left")
 
 
+def agregar_clima(tabla: pd.DataFrame, usar_cache: bool = True) -> pd.DataFrame:
+    """Agrega el clima histórico de cada carrera: lluvia (bool) y temperatura (°C).
+
+    Ver `weather.obtener_clima_carrera` para las fuentes usadas (OpenF1
+    desde 2023, Open-Meteo Archive para años anteriores). Es clima real,
+    no pronóstico: solo tiene sentido para carreras ya disputadas.
+
+    Args:
+        tabla: Tabla de resultados con temporada, ronda, fecha, hora,
+            circuito_lat, circuito_lon.
+        usar_cache: Si es False, fuerza a pedir los datos siempre a la API.
+
+    Returns:
+        Copia de `tabla` con las columnas `lluvia` y `temperatura_c`
+        agregadas (None si ninguna fuente pudo resolver el clima de esa
+        carrera), sin las columnas de hora/coordenadas, que ya cumplieron
+        su función.
+    """
+    carreras = tabla[
+        ["temporada", "ronda", "fecha", "hora", "circuito_lat", "circuito_lon"]
+    ].drop_duplicates(subset=["temporada", "ronda"])
+
+    filas_clima = []
+    for _, carrera in carreras.iterrows():
+        clima = weather.obtener_clima_carrera(
+            temporada=int(carrera["temporada"]),
+            ronda=int(carrera["ronda"]),
+            fecha=carrera["fecha"],
+            hora=carrera["hora"],
+            lat=carrera["circuito_lat"],
+            lon=carrera["circuito_lon"],
+            usar_cache=usar_cache,
+        )
+        filas_clima.append({
+            "temporada": carrera["temporada"],
+            "ronda": carrera["ronda"],
+            "lluvia": clima["lluvia"],
+            "temperatura_c": clima["temperatura_c"],
+        })
+
+    tabla_clima = pd.DataFrame(filas_clima)
+    resultado = tabla.merge(tabla_clima, on=["temporada", "ronda"], how="left")
+    return resultado.drop(columns=["hora", "circuito_lat", "circuito_lon"])
+
+
 def calcular_delta_clasificacion_ritmo(tabla: pd.DataFrame, ventana: int = 4) -> pd.DataFrame:
     """Calcula, por equipo, el delta entre clasificación y ritmo de carrera.
 
@@ -377,12 +438,15 @@ def agregar_delta_clasificacion_ritmo(tabla: pd.DataFrame, ventana: int = 4) -> 
 
 
 def construir_dataset_base(
-    temporadas: list[int], usar_cache: bool = True, ventana_forma_reciente: int = 4
+    temporadas: list[int],
+    usar_cache: bool = True,
+    ventana_forma_reciente: int = 4,
+    incluir_clima: bool = True,
 ) -> pd.DataFrame:
     """Arma la tabla base del dataset: resultados, grid, gap a la pole,
     forma reciente, historial de circuito, dificultad de adelantamiento,
-    delta clasificación/ritmo, curva de desarrollo y confiabilidad por
-    equipo.
+    delta clasificación/ritmo, curva de desarrollo, confiabilidad por
+    equipo y clima histórico.
 
     Args:
         temporadas: Años a incluir (ej: [2023, 2024, 2025, 2026]).
@@ -392,6 +456,10 @@ def construir_dataset_base(
             confiabilidad del equipo (ver `agregar_forma_reciente`,
             `agregar_delta_clasificacion_ritmo` y
             `agregar_confiabilidad_equipo`).
+        incluir_clima: Si es False, omite `agregar_clima` (una llamada de
+            red por carrera nueva, más lenta que el resto de las
+            features); útil para iterar rápido sin depender de OpenF1 /
+            Open-Meteo.
 
     Returns:
         DataFrame combinado de todas las temporadas pedidas, ordenado por
@@ -422,6 +490,8 @@ def construir_dataset_base(
     dataset = agregar_delta_clasificacion_ritmo(dataset, ventana=ventana_forma_reciente)
     dataset = agregar_curva_desarrollo(dataset)
     dataset = agregar_confiabilidad_equipo(dataset, ventana=ventana_forma_reciente)
+    if incluir_clima:
+        dataset = agregar_clima(dataset, usar_cache=usar_cache)
 
     return dataset.sort_values(["temporada", "ronda", "grid"]).reset_index(drop=True)
 
