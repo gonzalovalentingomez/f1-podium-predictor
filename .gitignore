@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Data cache (regenerable desde la API)
+pipeline/data_cache/
+
+# Next.js / Node
+node_modules/
+.next/
+out/
+.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Entorno / secretos
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
