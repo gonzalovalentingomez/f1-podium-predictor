@@ -226,3 +226,45 @@ def obtener_resultados_sprint_temporada(temporada: int, usar_cache: bool = True)
     return _obtener_temporada_generico(
         temporada, "sprint", "SprintResults", usar_cache, permitir_vacio=True
     )
+
+
+def obtener_calendario_temporada(temporada: int, usar_cache: bool = True) -> list:
+    """Obtiene el calendario completo de una temporada, corridas o no.
+
+    A diferencia de `obtener_resultados_temporada` (que pega a /results/ y
+    solo devuelve carreras ya disputadas), esto pega a /races/, que trae
+    el calendario completo -- incluidas las carreras futuras, con su
+    fecha y horario de clasificación/carrera -- se hayan corrido o no.
+    Útil para ubicar una carrera futura (ej. saber la ronda y la fecha de
+    Monza antes de que exista clasificación o resultados).
+
+    No reusa `_obtener_recurso_paginado`: ahí cada carrera trae una lista
+    de resultados que puede llegar partida entre páginas, pero acá cada
+    carrera es un único ítem (nada que fusionar) y el calendario completo
+    de una temporada entra holgado en una sola página.
+
+    Raises:
+        TemporadaInvalidaError: si la temporada no tiene calendario.
+        ErrorDeConexionError: si falla la conexión y no hay caché disponible.
+    """
+    clave = f"{temporada}_calendario"
+    if usar_cache:
+        datos_cacheados = _leer_de_cache(clave)
+        if datos_cacheados is not None:
+            return datos_cacheados
+
+    url = f"{BASE_URL}/{temporada}/races/?limit=100"
+    datos = _pedir_pagina(url)
+
+    try:
+        carreras = datos["MRData"]["RaceTable"]["Races"]
+    except KeyError as error:
+        raise TemporadaInvalidaError(
+            f"La respuesta de la API no tiene el formato esperado: {error}"
+        ) from error
+
+    if not carreras:
+        raise TemporadaInvalidaError(f"No se encontró calendario para la temporada {temporada}.")
+
+    _guardar_en_cache(clave, carreras)
+    return carreras
