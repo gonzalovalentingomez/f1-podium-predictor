@@ -118,10 +118,61 @@ def test_agregar_historial_circuito():
     assert fila_monza_2026["historial_equipo_circuito"] == 1.0
 
 
+def test_calcular_dificultad_adelantamiento():
+    filas = []
+    # Mónaco: el grid predice el resultado de forma perfecta (correlación 1.0).
+    for ronda, orden_final in enumerate([[1, 2, 3], [1, 2, 3]], start=1):
+        for grid, posicion in zip([1, 2, 3], orden_final):
+            filas.append({"temporada": 2025, "ronda": ronda, "circuito_id": "monaco",
+                          "grid": grid, "posicion_final": posicion})
+    # Monza: el resultado final está bastante mezclado respecto al grid.
+    for ronda, orden_final in enumerate([[3, 1, 2], [2, 3, 1]], start=1):
+        for grid, posicion in zip([1, 2, 3], orden_final):
+            filas.append({"temporada": 2025, "ronda": ronda, "circuito_id": "monza",
+                          "grid": grid, "posicion_final": posicion})
+    tabla = pd.DataFrame(filas)
+
+    resumen = features.calcular_dificultad_adelantamiento(tabla)
+    dificultad_monaco = resumen.loc[
+        resumen["circuito_id"] == "monaco", "dificultad_adelantamiento"
+    ].iloc[0]
+    dificultad_monza = resumen.loc[
+        resumen["circuito_id"] == "monza", "dificultad_adelantamiento"
+    ].iloc[0]
+
+    assert dificultad_monaco == 1.0
+    assert dificultad_monaco > dificultad_monza
+    assert resumen.loc[
+        resumen["circuito_id"] == "monaco", "dificultad_adelantamiento_muestras"
+    ].iloc[0] == 2
+
+
+def test_calcular_delta_clasificacion_ritmo():
+    filas = [
+        # Ronda 1: Alpine gana posiciones en carrera respecto al grid.
+        {"temporada": 2026, "ronda": 1, "constructor_id": "alpine", "grid": 10, "posicion_final": 6},
+        {"temporada": 2026, "ronda": 1, "constructor_id": "alpine", "grid": 12, "posicion_final": 8},
+        # Ronda 2: repite el mismo patrón.
+        {"temporada": 2026, "ronda": 2, "constructor_id": "alpine", "grid": 9, "posicion_final": 5},
+        {"temporada": 2026, "ronda": 2, "constructor_id": "alpine", "grid": 11, "posicion_final": 7},
+    ]
+    tabla = pd.DataFrame(filas)
+    resumen = features.calcular_delta_clasificacion_ritmo(tabla, ventana=4)
+
+    fila_ronda1 = resumen.loc[resumen["ronda"] == 1].iloc[0]
+    assert pd.isna(fila_ronda1["delta_clasificacion_ritmo"])  # sin carreras previas
+
+    fila_ronda2 = resumen.loc[resumen["ronda"] == 2].iloc[0]
+    # Ronda 1: delta promedio del equipo = ((10-6)+(12-8))/2 = 4.0
+    assert fila_ronda2["delta_clasificacion_ritmo"] == 4.0
+
+
 if __name__ == "__main__":
     test_tiempo_a_segundos()
     test_construir_tabla_resultados()
     test_construir_tabla_clasificacion()
     test_agregar_forma_reciente()
     test_agregar_historial_circuito()
+    test_calcular_dificultad_adelantamiento()
+    test_calcular_delta_clasificacion_ritmo()
     print("Todas las pruebas de features.py pasaron correctamente.")

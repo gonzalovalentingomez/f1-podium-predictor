@@ -3,14 +3,20 @@
 Combina resultados de carrera y clasificación de Jolpica-F1 (vía
 `api_client`) en una tabla por piloto/carrera. Por ahora incluye: grid de
 largada, gap de tiempo contra la pole, resultado final (con la variable
-objetivo `podio`), forma reciente del piloto y historial de piloto/equipo
-en el circuito. El resto de las features del brief (delta clasificación/
-ritmo por equipo, curva de desarrollo, confiabilidad, clima, etc.) se
-agregan incrementalmente sobre esta misma tabla base.
+objetivo `podio`), forma reciente del piloto, historial de piloto/equipo
+en el circuito, dificultad de adelantamiento del circuito y delta
+clasificación/ritmo por equipo. El resto de las features del brief (curva
+de desarrollo, confiabilidad, clima, rookies) se agregan incrementalmente
+sobre esta misma tabla base.
 
-Las features de forma reciente e historial de circuito solo usan carreras
-ANTERIORES a la que se está prediciendo (nunca la carrera actual), para no
-filtrar información del futuro al dataset de entrenamiento.
+Forma reciente, historial de circuito y delta clasificación/ritmo solo
+usan carreras ANTERIORES a la que se está prediciendo (nunca la carrera
+actual), para no filtrar información del futuro al dataset de
+entrenamiento. La dificultad de adelantamiento es la excepción: es una
+característica estructural del trazado (no cambia carrera a carrera), así
+que se calcula una sola vez sobre todo el histórico disponible, en línea
+con el brief ("no cambiaron con el reglamento, se puede usar histórico
+multi-temporada").
 """
 
 from pathlib import Path
@@ -172,17 +178,111 @@ def agregar_historial_circuito(tabla: pd.DataFrame) -> pd.DataFrame:
     return tabla
 
 
+def _filas_con_resultado_valido(tabla: pd.DataFrame) -> pd.DataFrame:
+    """Filtra a las filas con grid y posición final utilizables.
+
+    Descarta abandonos (posición final nula) y salidas desde pit lane
+    (grid 0, que no representa una posición de clasificación real).
+    """
+    tabla = tabla.dropna(subset=["grid", "posicion_final"])
+    return tabla[tabla["grid"] > 0]
+
+
+def calcular_dificultad_adelantamiento(tabla: pd.DataFrame) -> pd.DataFrame:
+    """Calcula, por circuito, la dificultad de adelantamiento.
+
+    Se usa como proxy la correlación de Pearson entre grid y posición
+    final a lo largo de todo el histórico disponible: cercana a 1 indica
+    que el grid predice casi directamente el resultado (poco margen para
+    adelantar, ej. Mónaco); valores más bajos indican pistas donde el
+    resultado depende menos de la largada.
+
+    Args:
+        tabla: Tabla de resultados con grid, posicion_final, circuito_id,
+            temporada y ronda (puede combinar varias temporadas).
+
+    Returns:
+        DataFrame con columnas circuito_id, dificultad_adelantamiento y
+        dificultad_adelantamiento_muestras (cantidad de carreras usadas
+        para el cálculo, para poder desconfiar de circuitos con poco
+        historial disponible).
+    """
+    datos_validos = _filas_con_resultado_valido(tabla)
+
+    filas = []
+    for circuito_id, grupo in datos_validos.groupby("circuito_id"):
+        filas.append({
+            "circuito_id": circuito_id,
+            "dificultad_adelantamiento": grupo["grid"].corr(grupo["posicion_final"]),
+            "dificultad_adelantamiento_muestras": grupo[["temporada", "ronda"]]
+            .drop_duplicates()
+            .shape[0],
+        })
+    return pd.DataFrame(filas)
+
+
+def agregar_dificultad_adelantamiento(tabla: pd.DataFrame) -> pd.DataFrame:
+    """Une la dificultad de adelantamiento de cada circuito a la tabla."""
+    dificultad = calcular_dificultad_adelantamiento(tabla)
+    return tabla.merge(dificultad, on="circuito_id", how="left")
+
+
+def calcular_delta_clasificacion_ritmo(tabla: pd.DataFrame, ventana: int = 4) -> pd.DataFrame:
+    """Calcula, por equipo, el delta entre clasificación y ritmo de carrera.
+
+    Primero promedia (grid - posición final) de los dos autos de cada
+    equipo en cada carrera, y después toma el promedio móvil de ese delta
+    en las últimas `ventana` carreras previas del equipo (sin incluir la
+    carrera actual). Un delta positivo indica que el equipo suele
+    terminar mejor de lo que clasificó (buen ritmo de carrera relativo a
+    la clasificación, ej. Alpine); uno negativo indica el patrón inverso
+    (ej. Red Bull).
+
+    Args:
+        tabla: Tabla de resultados con grid, posicion_final,
+            constructor_id, temporada y ronda.
+        ventana: Cantidad de carreras previas del equipo a promediar.
+
+    Returns:
+        DataFrame con columnas temporada, ronda, constructor_id y
+        delta_clasificacion_ritmo. NaN si el equipo no tiene carreras
+        previas en el histórico disponible.
+    """
+    datos_validos = _filas_con_resultado_valido(tabla).copy()
+    datos_validos["delta"] = datos_validos["grid"] - datos_validos["posicion_final"]
+
+    por_carrera = (
+        datos_validos.groupby(["temporada", "ronda", "constructor_id"])["delta"]
+        .mean()
+        .reset_index()
+        .sort_values(["constructor_id", "temporada", "ronda"])
+    )
+    por_carrera["delta_clasificacion_ritmo"] = por_carrera.groupby("constructor_id")[
+        "delta"
+    ].transform(lambda serie: serie.shift(1).rolling(ventana, min_periods=1).mean())
+
+    return por_carrera[["temporada", "ronda", "constructor_id", "delta_clasificacion_ritmo"]]
+
+
+def agregar_delta_clasificacion_ritmo(tabla: pd.DataFrame, ventana: int = 4) -> pd.DataFrame:
+    """Une el delta clasificación/ritmo por equipo a la tabla principal."""
+    delta = calcular_delta_clasificacion_ritmo(tabla, ventana=ventana)
+    return tabla.merge(delta, on=["temporada", "ronda", "constructor_id"], how="left")
+
+
 def construir_dataset_base(
     temporadas: list[int], usar_cache: bool = True, ventana_forma_reciente: int = 4
 ) -> pd.DataFrame:
     """Arma la tabla base del dataset: resultados, grid, gap a la pole,
-    forma reciente e historial de circuito.
+    forma reciente, historial de circuito, dificultad de adelantamiento y
+    delta clasificación/ritmo por equipo.
 
     Args:
         temporadas: Años a incluir (ej: [2023, 2024, 2025, 2026]).
         usar_cache: Si es False, fuerza a pedir los datos siempre a la API.
         ventana_forma_reciente: Cantidad de carreras previas a promediar
-            para la forma reciente (ver `agregar_forma_reciente`).
+            para la forma reciente y el delta clasificación/ritmo (ver
+            `agregar_forma_reciente` y `agregar_delta_clasificacion_ritmo`).
 
     Returns:
         DataFrame combinado de todas las temporadas pedidas, ordenado por
@@ -209,6 +309,8 @@ def construir_dataset_base(
     )
     dataset = agregar_forma_reciente(dataset, ventana=ventana_forma_reciente)
     dataset = agregar_historial_circuito(dataset)
+    dataset = agregar_dificultad_adelantamiento(dataset)
+    dataset = agregar_delta_clasificacion_ritmo(dataset, ventana=ventana_forma_reciente)
 
     return dataset.sort_values(["temporada", "ronda", "grid"]).reset_index(drop=True)
 
