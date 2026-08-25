@@ -167,6 +167,42 @@ def test_calcular_delta_clasificacion_ritmo():
     assert fila_ronda2["delta_clasificacion_ritmo"] == 4.0
 
 
+def test_calcular_curva_desarrollo():
+    filas = [
+        # McLaren mejora carrera a carrera durante la temporada.
+        {"temporada": 2026, "ronda": 1, "constructor_id": "mclaren", "puntos": 10.0},
+        {"temporada": 2026, "ronda": 2, "constructor_id": "mclaren", "puntos": 20.0},
+        {"temporada": 2026, "ronda": 3, "constructor_id": "mclaren", "puntos": 30.0},
+    ]
+    tabla = pd.DataFrame(filas)
+    resumen = features.calcular_curva_desarrollo(tabla, minimo_carreras=2)
+
+    fila_ronda1 = resumen.loc[resumen["ronda"] == 1].iloc[0]
+    fila_ronda2 = resumen.loc[resumen["ronda"] == 2].iloc[0]
+    fila_ronda3 = resumen.loc[resumen["ronda"] == 3].iloc[0]
+
+    assert pd.isna(fila_ronda1["curva_desarrollo"])  # sin carreras previas
+    assert pd.isna(fila_ronda2["curva_desarrollo"])  # solo 1 carrera previa (< mínimo)
+    assert round(fila_ronda3["curva_desarrollo"], 6) == 10.0  # pendiente rondas 1-2: (20-10)/(2-1)
+
+
+def test_calcular_confiabilidad_equipo():
+    filas = [
+        {"temporada": 2026, "ronda": 1, "constructor_id": "haas", "estado": "Accident"},
+        {"temporada": 2026, "ronda": 1, "constructor_id": "haas", "estado": "Finished"},
+        {"temporada": 2026, "ronda": 2, "constructor_id": "haas", "estado": "Finished"},
+        {"temporada": 2026, "ronda": 2, "constructor_id": "haas", "estado": "Finished"},
+    ]
+    tabla = pd.DataFrame(filas)
+    resumen = features.calcular_confiabilidad_equipo(tabla, ventana=4)
+
+    fila_ronda1 = resumen.loc[resumen["ronda"] == 1].iloc[0]
+    assert pd.isna(fila_ronda1["tasa_dnf_equipo"])  # sin carreras previas
+
+    fila_ronda2 = resumen.loc[resumen["ronda"] == 2].iloc[0]
+    assert fila_ronda2["tasa_dnf_equipo"] == 0.5  # ronda 1: 1 de 2 autos abandonó
+
+
 if __name__ == "__main__":
     test_tiempo_a_segundos()
     test_construir_tabla_resultados()
@@ -175,4 +211,6 @@ if __name__ == "__main__":
     test_agregar_historial_circuito()
     test_calcular_dificultad_adelantamiento()
     test_calcular_delta_clasificacion_ritmo()
+    test_calcular_curva_desarrollo()
+    test_calcular_confiabilidad_equipo()
     print("Todas las pruebas de features.py pasaron correctamente.")

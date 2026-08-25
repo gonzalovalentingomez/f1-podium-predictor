@@ -4,23 +4,27 @@ Combina resultados de carrera y clasificación de Jolpica-F1 (vía
 `api_client`) en una tabla por piloto/carrera. Por ahora incluye: grid de
 largada, gap de tiempo contra la pole, resultado final (con la variable
 objetivo `podio`), forma reciente del piloto, historial de piloto/equipo
-en el circuito, dificultad de adelantamiento del circuito y delta
-clasificación/ritmo por equipo. El resto de las features del brief (curva
-de desarrollo, confiabilidad, clima, rookies) se agregan incrementalmente
-sobre esta misma tabla base.
+en el circuito, dificultad de adelantamiento del circuito, delta
+clasificación/ritmo por equipo, curva de desarrollo del auto en la
+temporada y confiabilidad (tasa de DNF) del equipo. Quedan del brief:
+clima (OpenF1) y proxy de rookies (Fórmula 2), que requieren integrar una
+fuente de datos nueva cada una.
 
-Forma reciente, historial de circuito y delta clasificación/ritmo solo
-usan carreras ANTERIORES a la que se está prediciendo (nunca la carrera
-actual), para no filtrar información del futuro al dataset de
-entrenamiento. La dificultad de adelantamiento es la excepción: es una
-característica estructural del trazado (no cambia carrera a carrera), así
-que se calcula una sola vez sobre todo el histórico disponible, en línea
-con el brief ("no cambiaron con el reglamento, se puede usar histórico
-multi-temporada").
+Forma reciente, historial de circuito, delta clasificación/ritmo, curva
+de desarrollo y confiabilidad solo usan carreras ANTERIORES a la que se
+está prediciendo (nunca la carrera actual), para no filtrar información
+del futuro al dataset de entrenamiento. La curva de desarrollo además se
+reinicia en cada temporada (es un fenómeno dentro de una temporada). La
+dificultad de adelantamiento es la excepción: es una característica
+estructural del trazado (no cambia carrera a carrera), así que se calcula
+una sola vez sobre todo el histórico disponible, en línea con el brief
+("no cambiaron con el reglamento, se puede usar histórico multi-
+temporada").
 """
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 import api_client
@@ -227,6 +231,108 @@ def agregar_dificultad_adelantamiento(tabla: pd.DataFrame) -> pd.DataFrame:
     return tabla.merge(dificultad, on="circuito_id", how="left")
 
 
+def calcular_curva_desarrollo(tabla: pd.DataFrame, minimo_carreras: int = 2) -> pd.DataFrame:
+    """Calcula, por equipo y carrera, la curva de desarrollo del auto.
+
+    Se define como la pendiente de una regresión lineal simple de los
+    puntos promedio del equipo por carrera en función de la ronda, usando
+    solo carreras ANTERIORES de esa misma temporada (el desarrollo del
+    auto es un fenómeno dentro de una temporada, no se arrastra entre
+    temporadas). Pendiente positiva: el equipo viene mejorando carrera a
+    carrera. Negativa: viene empeorando.
+
+    Args:
+        tabla: Tabla de resultados con puntos, constructor_id, temporada
+            y ronda.
+        minimo_carreras: Cantidad mínima de carreras previas en la
+            temporada para poder ajustar una pendiente (2 es el mínimo
+            matemático para una regresión lineal).
+
+    Returns:
+        DataFrame con columnas temporada, ronda, constructor_id y
+        curva_desarrollo. NaN si el equipo todavía no tiene suficientes
+        carreras previas en esa temporada.
+    """
+    por_carrera = (
+        tabla.groupby(["temporada", "ronda", "constructor_id"])["puntos"]
+        .mean()
+        .reset_index()
+        .sort_values(["constructor_id", "temporada", "ronda"])
+    )
+
+    def _pendientes_del_grupo(grupo: pd.DataFrame) -> pd.Series:
+        pendientes = []
+        for i in range(len(grupo)):
+            previas = grupo.iloc[:i]
+            if len(previas) < minimo_carreras:
+                pendientes.append(np.nan)
+            else:
+                pendiente, _ = np.polyfit(previas["ronda"], previas["puntos"], 1)
+                pendientes.append(pendiente)
+        return pd.Series(pendientes, index=grupo.index)
+
+    pendientes_por_grupo = [
+        _pendientes_del_grupo(grupo)
+        for _, grupo in por_carrera.groupby(["constructor_id", "temporada"], sort=False)
+    ]
+    por_carrera["curva_desarrollo"] = pd.concat(pendientes_por_grupo).reindex(por_carrera.index)
+
+    return por_carrera[["temporada", "ronda", "constructor_id", "curva_desarrollo"]]
+
+
+def agregar_curva_desarrollo(tabla: pd.DataFrame, minimo_carreras: int = 2) -> pd.DataFrame:
+    """Une la curva de desarrollo del equipo a la tabla principal."""
+    curva = calcular_curva_desarrollo(tabla, minimo_carreras=minimo_carreras)
+    return tabla.merge(curva, on=["temporada", "ronda", "constructor_id"], how="left")
+
+
+def calcular_confiabilidad_equipo(tabla: pd.DataFrame, ventana: int = 4) -> pd.DataFrame:
+    """Calcula, por equipo, la tasa de abandonos (DNF) reciente.
+
+    Se considera abandono cualquier resultado cuyo estado no sea
+    "Finished" ni "+N Lap(s)" (mismo criterio de "carrera terminada" que
+    `analisis.py` del F1 Stats Explorer). Primero se promedia la tasa de
+    abandono de los dos autos del equipo en cada carrera, y después se
+    toma el promedio móvil de esa tasa en las últimas `ventana` carreras
+    previas del equipo (sin incluir la carrera actual).
+
+    No distingue por motor/proveedor de motopropulsor porque Jolpica-F1
+    no expone esa relación (solo el constructor/equipo); queda como
+    limitación conocida frente al brief.
+
+    Args:
+        tabla: Tabla de resultados con estado, constructor_id, temporada
+            y ronda.
+        ventana: Cantidad de carreras previas del equipo a promediar.
+
+    Returns:
+        DataFrame con columnas temporada, ronda, constructor_id y
+        tasa_dnf_equipo. NaN si el equipo no tiene carreras previas.
+    """
+    datos = tabla.copy()
+    datos["abandono"] = ~datos["estado"].str.contains(
+        "Finished|\\+", case=False, regex=True, na=False
+    )
+
+    por_carrera = (
+        datos.groupby(["temporada", "ronda", "constructor_id"])["abandono"]
+        .mean()
+        .reset_index()
+        .sort_values(["constructor_id", "temporada", "ronda"])
+    )
+    por_carrera["tasa_dnf_equipo"] = por_carrera.groupby("constructor_id")["abandono"].transform(
+        lambda serie: serie.shift(1).rolling(ventana, min_periods=1).mean()
+    )
+
+    return por_carrera[["temporada", "ronda", "constructor_id", "tasa_dnf_equipo"]]
+
+
+def agregar_confiabilidad_equipo(tabla: pd.DataFrame, ventana: int = 4) -> pd.DataFrame:
+    """Une la tasa de abandonos reciente del equipo a la tabla principal."""
+    confiabilidad = calcular_confiabilidad_equipo(tabla, ventana=ventana)
+    return tabla.merge(confiabilidad, on=["temporada", "ronda", "constructor_id"], how="left")
+
+
 def calcular_delta_clasificacion_ritmo(tabla: pd.DataFrame, ventana: int = 4) -> pd.DataFrame:
     """Calcula, por equipo, el delta entre clasificación y ritmo de carrera.
 
@@ -274,15 +380,18 @@ def construir_dataset_base(
     temporadas: list[int], usar_cache: bool = True, ventana_forma_reciente: int = 4
 ) -> pd.DataFrame:
     """Arma la tabla base del dataset: resultados, grid, gap a la pole,
-    forma reciente, historial de circuito, dificultad de adelantamiento y
-    delta clasificación/ritmo por equipo.
+    forma reciente, historial de circuito, dificultad de adelantamiento,
+    delta clasificación/ritmo, curva de desarrollo y confiabilidad por
+    equipo.
 
     Args:
         temporadas: Años a incluir (ej: [2023, 2024, 2025, 2026]).
         usar_cache: Si es False, fuerza a pedir los datos siempre a la API.
         ventana_forma_reciente: Cantidad de carreras previas a promediar
-            para la forma reciente y el delta clasificación/ritmo (ver
-            `agregar_forma_reciente` y `agregar_delta_clasificacion_ritmo`).
+            para la forma reciente, el delta clasificación/ritmo y la
+            confiabilidad del equipo (ver `agregar_forma_reciente`,
+            `agregar_delta_clasificacion_ritmo` y
+            `agregar_confiabilidad_equipo`).
 
     Returns:
         DataFrame combinado de todas las temporadas pedidas, ordenado por
@@ -311,6 +420,8 @@ def construir_dataset_base(
     dataset = agregar_historial_circuito(dataset)
     dataset = agregar_dificultad_adelantamiento(dataset)
     dataset = agregar_delta_clasificacion_ritmo(dataset, ventana=ventana_forma_reciente)
+    dataset = agregar_curva_desarrollo(dataset)
+    dataset = agregar_confiabilidad_equipo(dataset, ventana=ventana_forma_reciente)
 
     return dataset.sort_values(["temporada", "ronda", "grid"]).reset_index(drop=True)
 
