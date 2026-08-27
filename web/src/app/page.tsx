@@ -22,7 +22,9 @@ type PrediccionCarrera = {
 };
 
 async function obtenerUltimaPrediccion(): Promise<PrediccionCarrera | null> {
-  const carpeta = path.join(process.cwd(), "..", "predictions");
+  // Copia dentro de public/ (no ../predictions/ del repo): así el proyecto
+  // queda autocontenido al deployar en Vercel, con la raíz apuntando a web/.
+  const carpeta = path.join(process.cwd(), "public", "predictions");
 
   let archivos: string[];
   try {

@@ -242,9 +242,25 @@ if __name__ == "__main__":
         "predicciones": predicciones.to_dict(orient="records"),
     }
 
-    carpeta_predicciones = Path(__file__).parent.parent / "predictions"
+    repo_raiz = Path(__file__).parent.parent
+    nombre_archivo = f"{temporada_objetivo}-{metadata['ronda']:02d}-{circuito_objetivo}.json"
+
+    # Copia "canónica" versionada, en la raíz del repo: registro histórico
+    # de qué se predijo y cuándo, independiente de cómo esté organizada
+    # la interfaz.
+    carpeta_predicciones = repo_raiz / "predictions"
     carpeta_predicciones.mkdir(exist_ok=True)
-    salida = carpeta_predicciones / f"{temporada_objetivo}-{metadata['ronda']:02d}-{circuito_objetivo}.json"
+    salida = carpeta_predicciones / nombre_archivo
     with open(salida, "w", encoding="utf-8") as archivo:
         json.dump(salida_json, archivo, ensure_ascii=False, indent=2)
     print(f"\nPredicción guardada en {salida}")
+
+    # Copia dentro de web/public/: la interfaz Next.js la lee de ahí para
+    # que el proyecto sea autocontenido al deployar (Vercel, con la raíz
+    # del proyecto en web/, no ve archivos fuera de esa carpeta).
+    carpeta_web = repo_raiz / "web" / "public" / "predictions"
+    if carpeta_web.parent.exists():  # no falla si todavía no se scaffoldeó web/
+        carpeta_web.mkdir(exist_ok=True)
+        with open(carpeta_web / nombre_archivo, "w", encoding="utf-8") as archivo:
+            json.dump(salida_json, archivo, ensure_ascii=False, indent=2)
+        print(f"Copia para la interfaz guardada en {carpeta_web / nombre_archivo}")
