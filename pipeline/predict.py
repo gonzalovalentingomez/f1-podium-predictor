@@ -58,7 +58,9 @@ def construir_fila_prediccion(
             temporada cuentan como historial reciente).
         temporada_objetivo: Temporada de la carrera a predecir.
         circuito_id: circuitId de Jolpica-F1 (ej. "monza").
-        usar_cache: Si es False, fuerza a pedir todos los datos a las APIs.
+        usar_cache: Si es False, fuerza a pedir también las temporadas
+            históricas a las APIs (la temporada objetivo se pide fresca
+            siempre, sin importar este parámetro; ver nota arriba).
 
     Returns:
         Tupla (tabla, metadata). `tabla` tiene una fila por piloto
@@ -70,7 +72,12 @@ def construir_fila_prediccion(
     if temporada_objetivo not in temporadas_historicas:
         raise ValueError("temporadas_historicas debe incluir a temporada_objetivo.")
 
-    calendario = api_client.obtener_calendario_temporada(temporada_objetivo, usar_cache=usar_cache)
+    # La temporada objetivo se pide siempre fresca a la API, nunca de
+    # caché: es justamente la que puede tener novedades (clasificación
+    # recién publicada) entre una corrida de predict.py y la siguiente.
+    # Las demás temporadas son historia cerrada, no cambian, así que sí
+    # conviene cachearlas.
+    calendario = api_client.obtener_calendario_temporada(temporada_objetivo, usar_cache=False)
     carrera_objetivo = _buscar_carrera_en_calendario(calendario, circuito_id)
     ronda_objetivo = int(carrera_objetivo["round"])
     circuito = carrera_objetivo.get("Circuit", {})
@@ -78,9 +85,12 @@ def construir_fila_prediccion(
 
     tablas_resultados, tablas_clasificacion = [], []
     for temporada in temporadas_historicas:
-        carreras = api_client.obtener_resultados_temporada(temporada, usar_cache=usar_cache)
+        usar_cache_temporada = usar_cache and temporada != temporada_objetivo
+        carreras = api_client.obtener_resultados_temporada(temporada, usar_cache=usar_cache_temporada)
         tablas_resultados.append(features.construir_tabla_resultados(carreras))
-        carreras_quali = api_client.obtener_clasificacion_temporada(temporada, usar_cache=usar_cache)
+        carreras_quali = api_client.obtener_clasificacion_temporada(
+            temporada, usar_cache=usar_cache_temporada
+        )
         tablas_clasificacion.append(features.construir_tabla_clasificacion(carreras_quali))
 
     resultados = pd.concat(tablas_resultados, ignore_index=True)
@@ -92,7 +102,7 @@ def construir_fila_prediccion(
 
     if hay_clasificacion_objetivo:
         carreras_quali_objetivo = api_client.obtener_clasificacion_temporada(
-            temporada_objetivo, usar_cache=usar_cache
+            temporada_objetivo, usar_cache=False
         )
         quali_cruda = next(c for c in carreras_quali_objetivo if int(c["round"]) == ronda_objetivo)
         alineacion = pd.DataFrame([
@@ -111,7 +121,7 @@ def construir_fila_prediccion(
         # corre). El grid queda vacío; el modelo lo imputa con la
         # mediana, igual que hace con cualquier NaN en entrenamiento.
         carreras_previas = api_client.obtener_resultados_temporada(
-            temporada_objetivo, usar_cache=usar_cache
+            temporada_objetivo, usar_cache=False
         )
         if not carreras_previas:
             raise ValueError(
