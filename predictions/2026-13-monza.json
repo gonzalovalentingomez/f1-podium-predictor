@@ -4,184 +4,185 @@
   "ronda": 13,
   "gran_premio": "Italian Grand Prix",
   "fecha": "2026-09-06",
-  "clasificacion_disponible": false,
-  "generado_en": "2026-09-05T15:50:06.320524+00:00",
+  "clasificacion_disponible": true,
+  "fuente_grid": "openf1",
+  "generado_en": "2026-09-05T15:56:35.540675+00:00",
   "predicciones": [
-    {
-      "piloto_id": "leclerc",
-      "piloto": "Charles Leclerc",
-      "constructor_id": "ferrari",
-      "constructor": "Ferrari",
-      "grid": null,
-      "probabilidad_podio": 0.30072406972875904
-    },
-    {
-      "piloto_id": "hamilton",
-      "piloto": "Lewis Hamilton",
-      "constructor_id": "ferrari",
-      "constructor": "Ferrari",
-      "grid": null,
-      "probabilidad_podio": 0.28526178673182
-    },
-    {
-      "piloto_id": "norris",
-      "piloto": "Lando Norris",
-      "constructor_id": "mclaren",
-      "constructor": "McLaren",
-      "grid": null,
-      "probabilidad_podio": 0.2852461765869227
-    },
-    {
-      "piloto_id": "antonelli",
-      "piloto": "Andrea Kimi Antonelli",
-      "constructor_id": "mercedes",
-      "constructor": "Mercedes",
-      "grid": null,
-      "probabilidad_podio": 0.2293930204461662
-    },
     {
       "piloto_id": "russell",
       "piloto": "George Russell",
       "constructor_id": "mercedes",
       "constructor": "Mercedes",
-      "grid": null,
-      "probabilidad_podio": 0.1964818688565121
+      "grid": 2,
+      "probabilidad_podio": 0.9043209327184442
     },
     {
-      "piloto_id": "lawson",
-      "piloto": "Liam Lawson",
-      "constructor_id": "red_bull",
-      "constructor": "Red Bull",
-      "grid": null,
-      "probabilidad_podio": 0.1360258078859407
+      "piloto_id": "leclerc",
+      "piloto": "Charles Leclerc",
+      "constructor_id": "ferrari",
+      "constructor": "Ferrari",
+      "grid": 4,
+      "probabilidad_podio": 0.834672082111153
     },
     {
       "piloto_id": "piastri",
       "piloto": "Oscar Piastri",
       "constructor_id": "mclaren",
       "constructor": "McLaren",
-      "grid": null,
-      "probabilidad_podio": 0.101503452897815
+      "grid": 3,
+      "probabilidad_podio": 0.7647397363132546
     },
     {
-      "piloto_id": "max_verstappen",
-      "piloto": "Max Verstappen",
-      "constructor_id": "red_bull",
-      "constructor": "Red Bull",
-      "grid": null,
-      "probabilidad_podio": 0.07228743096710916
-    },
-    {
-      "piloto_id": "arvid_lindblad",
-      "piloto": "Arvid Lindblad",
-      "constructor_id": "rb",
-      "constructor": "RB F1 Team",
-      "grid": null,
-      "probabilidad_podio": 0.03568375760933795
-    },
-    {
-      "piloto_id": "bortoleto",
-      "piloto": "Gabriel Bortoleto",
-      "constructor_id": "audi",
-      "constructor": "Audi",
-      "grid": null,
-      "probabilidad_podio": 0.026744837385458506
-    },
-    {
-      "piloto_id": "sainz",
-      "piloto": "Carlos Sainz",
-      "constructor_id": "williams",
-      "constructor": "Williams",
-      "grid": null,
-      "probabilidad_podio": 0.023806194777595956
-    },
-    {
-      "piloto_id": "albon",
-      "piloto": "Alexander Albon",
-      "constructor_id": "williams",
-      "constructor": "Williams",
-      "grid": null,
-      "probabilidad_podio": 0.02272206683288746
-    },
-    {
-      "piloto_id": "hulkenberg",
-      "piloto": "Nico Hülkenberg",
-      "constructor_id": "audi",
-      "constructor": "Audi",
-      "grid": null,
-      "probabilidad_podio": 0.014976305080222737
+      "piloto_id": "hamilton",
+      "piloto": "Lewis Hamilton",
+      "constructor_id": "ferrari",
+      "constructor": "Ferrari",
+      "grid": 5,
+      "probabilidad_podio": 0.7344248937961471
     },
     {
       "piloto_id": "gasly",
       "piloto": "Pierre Gasly",
       "constructor_id": "alpine",
       "constructor": "Alpine F1 Team",
-      "grid": null,
-      "probabilidad_podio": 0.014138854518923324
+      "grid": 1,
+      "probabilidad_podio": 0.6018239412440709
     },
     {
-      "piloto_id": "tsunoda",
-      "piloto": "Yuki Tsunoda",
+      "piloto_id": "antonelli",
+      "piloto": "Andrea Kimi Antonelli",
+      "constructor_id": "mercedes",
+      "constructor": "Mercedes",
+      "grid": 7,
+      "probabilidad_podio": 0.5433454230508686
+    },
+    {
+      "piloto_id": "norris",
+      "piloto": "Lando Norris",
+      "constructor_id": "mclaren",
+      "constructor": "McLaren",
+      "grid": 9,
+      "probabilidad_podio": 0.4513741010731955
+    },
+    {
+      "piloto_id": "max_verstappen",
+      "piloto": "Max Verstappen",
+      "constructor_id": "red_bull",
+      "constructor": "Red Bull",
+      "grid": 6,
+      "probabilidad_podio": 0.41114419215716536
+    },
+    {
+      "piloto_id": "arvid_lindblad",
+      "piloto": "Arvid Lindblad",
       "constructor_id": "rb",
       "constructor": "RB F1 Team",
-      "grid": null,
-      "probabilidad_podio": 0.012980583083209006
+      "grid": 10,
+      "probabilidad_podio": 0.13988981920681093
     },
     {
-      "piloto_id": "perez",
-      "piloto": "Sergio Pérez",
-      "constructor_id": "cadillac",
-      "constructor": "Cadillac F1 Team",
-      "grid": null,
-      "probabilidad_podio": 0.012893164026901542
+      "piloto_id": "lawson",
+      "piloto": "Liam Lawson",
+      "constructor_id": "red_bull",
+      "constructor": "Red Bull",
+      "grid": 14,
+      "probabilidad_podio": 0.13937134806755488
     },
     {
       "piloto_id": "colapinto",
       "piloto": "Franco Colapinto",
       "constructor_id": "alpine",
       "constructor": "Alpine F1 Team",
-      "grid": null,
-      "probabilidad_podio": 0.01267880524535797
+      "grid": 8,
+      "probabilidad_podio": 0.12615169712374075
     },
     {
-      "piloto_id": "bottas",
-      "piloto": "Valtteri Bottas",
-      "constructor_id": "cadillac",
-      "constructor": "Cadillac F1 Team",
-      "grid": null,
-      "probabilidad_podio": 0.012235373210689675
+      "piloto_id": "bortoleto",
+      "piloto": "Gabriel Bortoleto",
+      "constructor_id": "audi",
+      "constructor": "Audi",
+      "grid": 11,
+      "probabilidad_podio": 0.03620350975337269
     },
     {
-      "piloto_id": "ocon",
-      "piloto": "Esteban Ocon",
-      "constructor_id": "haas",
-      "constructor": "Haas F1 Team",
-      "grid": null,
-      "probabilidad_podio": 0.011949133530262739
+      "piloto_id": "sainz",
+      "piloto": "Carlos Sainz",
+      "constructor_id": "williams",
+      "constructor": "Williams",
+      "grid": 15,
+      "probabilidad_podio": 0.020762800015460662
+    },
+    {
+      "piloto_id": "albon",
+      "piloto": "Alexander Albon",
+      "constructor_id": "williams",
+      "constructor": "Williams",
+      "grid": 18,
+      "probabilidad_podio": 0.020548770109967855
+    },
+    {
+      "piloto_id": "hulkenberg",
+      "piloto": "Nico Hülkenberg",
+      "constructor_id": "audi",
+      "constructor": "Audi",
+      "grid": 13,
+      "probabilidad_podio": 0.0186494841449026
     },
     {
       "piloto_id": "bearman",
       "piloto": "Oliver Bearman",
       "constructor_id": "haas",
       "constructor": "Haas F1 Team",
-      "grid": null,
-      "probabilidad_podio": 0.011949133530262739
+      "grid": 12,
+      "probabilidad_podio": 0.015677515852666274
+    },
+    {
+      "piloto_id": "tsunoda",
+      "piloto": "Yuki Tsunoda",
+      "constructor_id": "rb",
+      "constructor": "RB F1 Team",
+      "grid": 17,
+      "probabilidad_podio": 0.011354749705402782
+    },
+    {
+      "piloto_id": "perez",
+      "piloto": "Sergio Pérez",
+      "constructor_id": "cadillac",
+      "constructor": "Cadillac F1 Team",
+      "grid": 20,
+      "probabilidad_podio": 0.010972591544162498
+    },
+    {
+      "piloto_id": "bottas",
+      "piloto": "Valtteri Bottas",
+      "constructor_id": "cadillac",
+      "constructor": "Cadillac F1 Team",
+      "grid": 19,
+      "probabilidad_podio": 0.01074632130366059
     },
     {
       "piloto_id": "alonso",
       "piloto": "Fernando Alonso",
       "constructor_id": "aston_martin",
       "constructor": "Aston Martin",
-      "grid": null,
-      "probabilidad_podio": 0.011626144874177978
+      "grid": 21,
+      "probabilidad_podio": 0.010137092967148886
+    },
+    {
+      "piloto_id": "ocon",
+      "piloto": "Esteban Ocon",
+      "constructor_id": "haas",
+      "constructor": "Haas F1 Team",
+      "grid": 16,
+      "probabilidad_podio": 0.010102101371139665
     },
     {
       "piloto_id": "stroll",
       "piloto": "Lance Stroll",
       "constructor_id": "aston_martin",
       "constructor": "Aston Martin",
-      "grid": null,
-      "probabilidad_podio": 0.011588900926319505
+      "grid": 22,
+      "probabilidad_podio": 0.010099849019290412
     }
   ]
 }

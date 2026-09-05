@@ -13,11 +13,14 @@ excluye automáticamente la carrera a predecir de su propio cálculo, sin
 duplicar la lógica de "no filtrar el futuro".
 
 El grid y el gap a la pole solo existen después de la clasificación
-(sábado). Si todavía no hay clasificación real para la carrera pedida,
-la predicción es "preliminar": usa la alineación de pilotos/equipos de
-la última carrera disputada como aproximación, y deja grid/gap_pole_seg
-vacíos (el modelo los imputa con la mediana, igual que en entrenamiento).
-Conviene volver a correr esto después de la clasificación real.
+(sábado). Jolpica-F1 suele tardar en publicarla; mientras tanto se
+intenta con OpenF1 (que la tiene casi apenas termina la sesión) como
+alternativa más rápida. Si ninguna de las dos la tiene todavía, la
+predicción es "preliminar": usa la alineación de pilotos/equipos de la
+última carrera disputada como aproximación, y deja grid/gap_pole_seg
+vacíos (el modelo los imputa con la mediana, igual que en
+entrenamiento). Conviene volver a correr esto después de que la
+clasificación esté disponible en alguna de las dos fuentes.
 """
 
 import json
@@ -32,6 +35,8 @@ import features
 import model
 import weather
 
+OPENF1_BASE_URL = "https://api.openf1.org/v1"
+
 
 def _buscar_carrera_en_calendario(calendario: list, circuito_id: str) -> dict:
     """Busca la carrera de un circuito dado en el calendario de una temporada."""
@@ -41,6 +46,83 @@ def _buscar_carrera_en_calendario(calendario: list, circuito_id: str) -> dict:
     if carrera is None:
         raise ValueError(f"No se encontró el circuito '{circuito_id}' en ese calendario.")
     return carrera
+
+
+def _alineacion_desde_openf1(
+    carrera_objetivo: dict, temporada_objetivo: int, ultima_carrera_conocida: dict
+) -> pd.DataFrame | None:
+    """Arma la alineación (grid real) desde OpenF1, cuando Jolpica-F1
+    todavía no publicó la clasificación. OpenF1 suele tener la sesión
+    disponible casi apenas termina, a diferencia de Jolpica que puede
+    tardar horas o más en ingerirla.
+
+    OpenF1 identifica pilotos por número de auto, no por driverId como
+    Jolpica; se cruza contra los números de auto de la última carrera
+    DISPUTADA en Jolpica (`ultima_carrera_conocida`) para recuperar
+    driver_id/constructor_id y nombres legibles. Un piloto que debuta
+    justo en esta carrera (sin número conocido todavía en Jolpica) queda
+    afuera de la alineación: es una limitación aceptada de este cruce.
+
+    Returns:
+        DataFrame con piloto_id, piloto, constructor_id, constructor,
+        grid y gap_pole_seg. None si OpenF1 tampoco tiene la sesión
+        todavía, o si no se pudo cruzar ningún piloto.
+    """
+    fecha_quali = carrera_objetivo.get("Qualifying", {}).get("date")
+    pais = carrera_objetivo.get("Circuit", {}).get("Location", {}).get("country")
+    if not fecha_quali or not pais:
+        return None
+
+    sesiones = weather._pedir_json(
+        f"{OPENF1_BASE_URL}/sessions",
+        {"year": temporada_objetivo, "session_name": "Qualifying", "country_name": pais},
+    )
+    sesion = next(
+        (s for s in sesiones or [] if str(s.get("date_start", "")).startswith(fecha_quali)), None
+    )
+    if sesion is None:
+        return None
+
+    resultados = weather._pedir_json(
+        f"{OPENF1_BASE_URL}/session_result", {"session_key": sesion["session_key"]}
+    )
+    if not resultados:
+        return None
+
+    numero_a_piloto = {
+        r["number"]: {
+            "piloto_id": r["Driver"]["driverId"],
+            "piloto": f"{r['Driver']['givenName']} {r['Driver']['familyName']}",
+            "constructor_id": r["Constructor"]["constructorId"],
+            "constructor": r["Constructor"]["name"],
+        }
+        for r in ultima_carrera_conocida["Results"]
+    }
+
+    def _mejor_tiempo(resultado: dict) -> float | None:
+        # `duration` trae [Q1, Q2, Q3]; None en las sesiones que el
+        # piloto no alcanzó a correr (eliminado antes). El último valor
+        # no nulo es su mejor vuelta relevante.
+        return next((d for d in reversed(resultado["duration"]) if d is not None), None)
+
+    tiempo_pole = next(
+        (_mejor_tiempo(r) for r in resultados if r["position"] == 1), None
+    )
+
+    filas = []
+    for resultado in resultados:
+        piloto = numero_a_piloto.get(str(resultado["driver_number"]))
+        if piloto is None:
+            continue
+        mejor_tiempo = _mejor_tiempo(resultado)
+        gap_pole_seg = (
+            round(mejor_tiempo - tiempo_pole, 3)
+            if mejor_tiempo is not None and tiempo_pole is not None
+            else None
+        )
+        filas.append({**piloto, "grid": resultado["position"], "gap_pole_seg": gap_pole_seg})
+
+    return pd.DataFrame(filas) if filas else None
 
 
 def construir_fila_prediccion(
@@ -66,8 +148,9 @@ def construir_fila_prediccion(
         Tupla (tabla, metadata). `tabla` tiene una fila por piloto
         esperado, con las mismas columnas de features que usa `model.py`
         (más piloto/constructor legibles). `metadata` trae ronda,
-        gran_premio, fecha y si la clasificación real ya estaba
-        disponible (predicción preliminar si no).
+        gran_premio, fecha, `clasificacion_disponible` (True si hay grid
+        real de alguna fuente) y `fuente_grid` ("jolpica", "openf1" o
+        "estimada", ver arriba).
     """
     if temporada_objetivo not in temporadas_historicas:
         raise ValueError("temporadas_historicas debe incluir a temporada_objetivo.")
@@ -101,6 +184,7 @@ def construir_fila_prediccion(
     ].empty
 
     if hay_clasificacion_objetivo:
+        fuente_grid = "jolpica"
         carreras_quali_objetivo = api_client.obtener_clasificacion_temporada(
             temporada_objetivo, usar_cache=False
         )
@@ -116,10 +200,10 @@ def construir_fila_prediccion(
             for r in quali_cruda["QualifyingResults"]
         ])
     else:
-        # Sin clasificación todavía: se aproxima con la alineación de la
-        # última carrera DISPUTADA (mejor estimación disponible de quién
-        # corre). El grid queda vacío; el modelo lo imputa con la
-        # mediana, igual que hace con cualquier NaN en entrenamiento.
+        # Jolpica-F1 todavía no publicó la clasificación. La última
+        # carrera DISPUTADA sirve como mejor estimación de quién corre
+        # (para el cruce con OpenF1, y como último recurso si tampoco
+        # OpenF1 la tiene todavía).
         carreras_previas = api_client.obtener_resultados_temporada(
             temporada_objetivo, usar_cache=False
         )
@@ -129,18 +213,27 @@ def construir_fila_prediccion(
                 "para aproximar la alineación de pilotos."
             )
         ultima_carrera = max(carreras_previas, key=lambda c: int(c["round"]))
-        alineacion = pd.DataFrame([
-            {
-                "piloto_id": r["Driver"]["driverId"],
-                "piloto": f"{r['Driver']['givenName']} {r['Driver']['familyName']}",
-                "constructor_id": r["Constructor"]["constructorId"],
-                "constructor": r["Constructor"]["name"],
-                "grid": None,
-            }
-            for r in ultima_carrera["Results"]
-        ])
 
-    stub = alineacion.copy()
+        alineacion = _alineacion_desde_openf1(carrera_objetivo, temporada_objetivo, ultima_carrera)
+        if alineacion is not None:
+            fuente_grid = "openf1"
+        else:
+            # Ninguna de las dos fuentes tiene la clasificación todavía:
+            # se aproxima la alineación sin grid (el modelo lo imputa
+            # con la mediana, igual que hace con cualquier NaN).
+            fuente_grid = "estimada"
+            alineacion = pd.DataFrame([
+                {
+                    "piloto_id": r["Driver"]["driverId"],
+                    "piloto": f"{r['Driver']['givenName']} {r['Driver']['familyName']}",
+                    "constructor_id": r["Constructor"]["constructorId"],
+                    "constructor": r["Constructor"]["name"],
+                    "grid": None,
+                }
+                for r in ultima_carrera["Results"]
+            ])
+
+    stub = alineacion[["piloto_id", "piloto", "constructor_id", "constructor", "grid"]].copy()
     stub["temporada"] = temporada_objetivo
     stub["ronda"] = ronda_objetivo
     stub["gran_premio"] = carrera_objetivo["raceName"]
@@ -158,6 +251,18 @@ def construir_fila_prediccion(
         on=["temporada", "ronda", "piloto_id"],
         how="left",
     )
+
+    if fuente_grid == "openf1":
+        # El merge de arriba no puede traer el gap a la pole (Jolpica no
+        # tiene esta clasificación todavía); se completa acá con el que
+        # ya viene calculado en `alineacion` desde OpenF1.
+        mapa_gap = alineacion.set_index("piloto_id")["gap_pole_seg"]
+        es_fila_objetivo = (combinado["temporada"] == temporada_objetivo) & (
+            combinado["ronda"] == ronda_objetivo
+        )
+        combinado.loc[es_fila_objetivo, "gap_pole_seg"] = combinado.loc[
+            es_fila_objetivo, "piloto_id"
+        ].map(mapa_gap)
 
     combinado = features.agregar_forma_reciente(combinado)
     combinado = features.agregar_historial_circuito(combinado)
@@ -183,7 +288,8 @@ def construir_fila_prediccion(
         "ronda": ronda_objetivo,
         "gran_premio": carrera_objetivo["raceName"],
         "fecha": carrera_objetivo["date"],
-        "clasificacion_disponible": hay_clasificacion_objetivo,
+        "clasificacion_disponible": fuente_grid in ("jolpica", "openf1"),
+        "fuente_grid": fuente_grid,  # "jolpica" | "openf1" | "estimada"
     }
     return fila_objetivo.reset_index(drop=True), metadata
 
@@ -233,12 +339,18 @@ if __name__ == "__main__":
 
     predicciones, metadata = predecir_carrera(temporadas_historicas, temporada_objetivo, circuito_objetivo)
 
-    if not metadata["clasificacion_disponible"]:
+    if metadata["fuente_grid"] == "openf1":
         print(
-            "AVISO: todavía no hay clasificación real para esta carrera. La "
-            "predicción es preliminar (sin grid ni gap a la pole; alineación "
-            "aproximada con la última carrera disputada). Conviene correr esto "
-            "de nuevo después de la clasificación real.\n"
+            "AVISO: el grid es real, pero viene de OpenF1 (Jolpica-F1 todavía no "
+            "publicó esta clasificación). Conviene correr esto de nuevo más "
+            "adelante para confirmar contra Jolpica-F1.\n"
+        )
+    elif metadata["fuente_grid"] == "estimada":
+        print(
+            "AVISO: todavía no hay clasificación real en ninguna fuente (ni "
+            "Jolpica-F1 ni OpenF1). La predicción es preliminar (sin grid ni "
+            "gap a la pole; alineación aproximada con la última carrera "
+            "disputada). Conviene correr esto de nuevo más tarde.\n"
         )
 
     print(f"{metadata['gran_premio']} ({metadata['fecha']}):")

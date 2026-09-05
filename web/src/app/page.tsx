@@ -17,6 +17,7 @@ type PrediccionCarrera = {
   gran_premio: string;
   fecha: string;
   clasificacion_disponible: boolean;
+  fuente_grid: "jolpica" | "openf1" | "estimada";
   generado_en: string;
   predicciones: Prediccion[];
 };
@@ -85,11 +86,17 @@ export default async function Home() {
           {formatearFecha(prediccion.fecha)}
         </p>
 
-        {!prediccion.clasificacion_disponible && (
+        {prediccion.fuente_grid === "estimada" && (
           <p className="mt-4 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:ring-amber-900">
             Predicción preliminar: todavía no hay clasificación real para esta
             carrera. El grid y el gap a la pole se completan recién después
             de la clasificación.
+          </p>
+        )}
+        {prediccion.fuente_grid === "openf1" && (
+          <p className="mt-4 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-800 ring-1 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:ring-blue-900">
+            Grid real (vía OpenF1) — Jolpica-F1 todavía no publicó esta
+            clasificación.
           </p>
         )}
       </header>
